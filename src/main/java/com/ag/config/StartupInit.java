@@ -21,9 +21,9 @@ public class StartupInit {
 		AgLogger.logDebug("INIT CALLED");
 
 		try {
-			String filePath = "/home/ACCESS/umair.ali/Downloads/RECON-CSV/1.csv";
-			ingestionService.ingestFile(filePath, "00004");
-			AgLogger.logInfo("File ingestion completed!");
+//			String filePath = "/home/ACCESS/umair.ali/Downloads/RECON-CSV/1.csv";
+//			ingestionService.ingestFile(filePath, "00004");
+//			AgLogger.logInfo("File ingestion completed!");
 		} catch (Exception e) {
 			AgLogger.logError(getClass(), "Exception", e);
 		}
