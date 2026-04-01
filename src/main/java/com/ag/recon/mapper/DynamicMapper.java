@@ -1,8 +1,7 @@
 package com.ag.recon.mapper;
 
 import java.sql.Types;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import org.springframework.core.io.Resource;
@@ -16,92 +15,114 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * DynamicMapper: Maps parsed file data to DB tables based on JSON metadata.
- * Supports multiple file types and corporate IDs from a single JSON array
- * configuration.
+ * Logs missing source columns and ensures DB targets exist.
  */
 @Component
 public class DynamicMapper {
 
-	private final JdbcTemplate jdbcTemplate;
-	private final ObjectMapper objectMapper = new ObjectMapper();
-	private final ResourceLoader resourceLoader;
+    private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ResourceLoader resourceLoader;
 
-	public DynamicMapper(ResourceLoader resourceLoader, JdbcTemplate jdbcTemplate) {
-		this.resourceLoader = resourceLoader;
-		this.jdbcTemplate = jdbcTemplate;
-	}
+    public DynamicMapper(ResourceLoader resourceLoader, JdbcTemplate jdbcTemplate) {
+        this.resourceLoader = resourceLoader;
+        this.jdbcTemplate = jdbcTemplate;
+    }
 
-	public void mapAndPersist(String fileType, List<Map<String, Object>> parsedData, String corpId) throws Exception {
+    public void mapAndPersist(String fileType, List<Map<String, Object>> parsedData, String corpId) throws Exception {
 
-		Resource resource = resourceLoader.getResource("classpath:mapping_config.json");
+        Resource resource = resourceLoader.getResource("classpath:mapping_config.json");
+        JsonNode configArray = objectMapper.readTree(resource.getInputStream());
 
-		// Load JSON array of mappings
-		JsonNode configArray = objectMapper.readTree(resource.getInputStream());
+        // Find mapping for fileType + corpId
+        JsonNode config = null;
+        for (JsonNode node : configArray) {
+            boolean fileMatch = node.get("fileType").asText().equalsIgnoreCase(fileType);
+            boolean corpMatch = node.has("corpId") && node.get("corpId").asText().equals(corpId);
 
-		// Find mapping for the current fileType AND corpId
-		JsonNode config = null;
-		for (JsonNode node : configArray) {
-			boolean fileMatch = node.get("fileType").asText().equalsIgnoreCase(fileType);
-			boolean corpMatch = node.has("corpId") && node.get("corpId").asText().equals(corpId);
+            if (fileMatch && corpMatch) {
+                config = node;
+                break;
+            }
+        }
 
-			if (fileMatch && corpMatch) {
-				config = node;
-				break;
-			}
-		}
+        if (config == null) {
+            AgLogger.logInfo("No mapping found for fileType=" + fileType + " and corpId=" + corpId);
+            return;
+        }
 
-		if (config == null) {
-			AgLogger.logInfo("No mapping found for fileType=" + fileType + " and corpId=" + corpId);
-			return;
-		}
+        String table = config.get("table").asText();
+        JsonNode columns = config.get("columns");
 
-		String table = config.get("table").asText();
-		JsonNode columns = config.get("columns");
+        // Optional: verify target columns exist in DB
+        Set<String> dbColumns = getDbColumns(table);
 
-		for (Map<String, Object> row : parsedData) {
-			List<String> colNames = columns.findValues("target").stream().map(JsonNode::asText)
-					.collect(Collectors.toList());
+        for (Map<String, Object> row : parsedData) {
+            List<String> colNames = new ArrayList<>();
+            List<Object> values = new ArrayList<>();
+            List<Integer> typesList = new ArrayList<>();
 
-			List<Object> values = columns.findValues("source").stream().map(srcNode -> row.get(srcNode.asText()))
-					.collect(Collectors.toList());
+            for (JsonNode col : columns) {
+                String source = col.get("source").asText();
+                String target = col.get("target").asText();
+                String typeStr = col.get("type").asText().toUpperCase();
 
-			// Add corpId as a column if it exists in the config
-			if (config.has("corpId")) {
-				colNames.add("corp_id"); // assuming DB column name is 'corp_id'
-				values.add(corpId);
-			}
+                // Check if target exists in DB
+                if (!dbColumns.contains(target.toUpperCase())) {
+                    AgLogger.logWarn("Target column '" + target + "' does not exist in table " + table);
+                    continue; // skip this column
+                }
 
-			String sql = "INSERT INTO " + table + " (" + String.join(",", colNames) + ") VALUES ("
-					+ colNames.stream().map(c -> "?").collect(Collectors.joining(",")) + ")";
+                colNames.add(target);
 
-			int[] types = columns.findValues("type").stream().mapToInt(node -> switch (node.asText().toUpperCase()) {
-			case "STRING" -> Types.VARCHAR;
-			case "DECIMAL" -> Types.DECIMAL;
-			case "DATE" -> Types.DATE;
-			case "TIMESTAMP" -> Types.TIMESTAMP;
-			case "INTEGER" -> Types.INTEGER;
-			default -> Types.VARCHAR;
-			}).toArray();
+                // Check if source exists in row
+                Object value = row.get(source);
+                if (value == null) {
+                    AgLogger.logWarn("Source column '" + source + "' missing in file row, setting NULL");
+                }
+                values.add(value);
 
-			// Add corpId type
-			if (config.has("corpId")) {
-				types = appendType(types, Types.VARCHAR);
-			}
+                typesList.add(switch (typeStr) {
+                    case "STRING" -> Types.VARCHAR;
+                    case "DECIMAL" -> Types.DECIMAL;
+                    case "DATE" -> Types.DATE;
+                    case "TIMESTAMP" -> Types.TIMESTAMP;
+                    case "INTEGER" -> Types.INTEGER;
+                    default -> Types.VARCHAR;
+                });
+            }
 
-			try {
-				AgLogger.logInfo("sql: " + sql);
-				jdbcTemplate.update(sql, values.toArray(), types);
-			} catch (Exception e) {
-				AgLogger.logError(getClass(), "Failed to insert row into table " + table + ": " + e.getMessage(), e);
-			}
-		}
-	}
+            // Add corpId
+            if (config.has("corpId") && dbColumns.contains("CORP_ID")) {
+                colNames.add("corp_id");
+                values.add(corpId);
+                typesList.add(Types.VARCHAR);
+            }
 
-	/** Helper method to append a type to the existing types array */
-	private int[] appendType(int[] original, int newType) {
-		int[] extended = new int[original.length + 1];
-		System.arraycopy(original, 0, extended, 0, original.length);
-		extended[original.length] = newType;
-		return extended;
-	}
+            String sql = "INSERT INTO " + table + " (" + String.join(",", colNames) + ") VALUES ("
+                    + colNames.stream().map(c -> "?").collect(Collectors.joining(",")) + ")";
+
+            try {
+                jdbcTemplate.update(sql, values.toArray(), typesList.stream().mapToInt(i -> i).toArray());
+                AgLogger.logInfo("Inserted row into " + table + ": " + values);
+            } catch (Exception e) {
+                AgLogger.logError(getClass(), "Failed to insert row: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    /**
+     * Fetch DB table columns (case-insensitive) to verify target existence.
+     */
+    private Set<String> getDbColumns(String tableName) {
+        try {
+            List<String> columns = jdbcTemplate.queryForList(
+                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ?",
+                    String.class, tableName);
+            return columns.stream().map(String::toUpperCase).collect(Collectors.toSet());
+        } catch (Exception e) {
+            AgLogger.logWarn("Failed to fetch DB columns for table " + tableName + ": " + e.getMessage());
+            return Collections.emptySet();
+        }
+    }
 }
