@@ -16,15 +16,16 @@ public class SecurityConfig {
 	public SecurityConfig(JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint) {
 		this.jwtAuthenticationEntryPoint = jwtAuthenticationEntryPoint;
 	}
-	
+
 	@Bean
-    public org.springframework.security.core.userdetails.UserDetailsService userDetailsService() {
-        return new org.springframework.security.provisioning.InMemoryUserDetailsManager();
-    }
+	public org.springframework.security.core.userdetails.UserDetailsService userDetailsService() {
+		return new org.springframework.security.provisioning.InMemoryUserDetailsManager();
+	}
 
 	@Bean
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-		http.csrf(csrf -> csrf.disable())
+		http.csrf(csrf -> csrf.csrfTokenRepository(
+				org.springframework.security.web.csrf.CookieCsrfTokenRepository.withHttpOnlyFalse()))
 				.authorizeHttpRequests(auth -> auth.requestMatchers("/test").permitAll().anyRequest().authenticated())
 				.exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthenticationEntryPoint))
 				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
