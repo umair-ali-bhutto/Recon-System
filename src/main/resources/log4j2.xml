@@ -5,8 +5,7 @@
 		<Property name="LOG_DIR">/mnt/8EFED7B1FED79037/UBUNTU-BACKUP/Desktop/ag-mw-logs
 		</Property>
 		<Property name="LOG_FILE">Recon-System</Property>
-		<Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level
-			%logger{1} - %msg%n%throwable</Property>
+		<Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{1} - %msg%n%throwable</Property>
 	</Properties>
 
 	<Appenders>

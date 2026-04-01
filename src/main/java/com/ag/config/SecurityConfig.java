@@ -16,6 +16,11 @@ public class SecurityConfig {
 	public SecurityConfig(JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint) {
 		this.jwtAuthenticationEntryPoint = jwtAuthenticationEntryPoint;
 	}
+	
+	@Bean
+    public org.springframework.security.core.userdetails.UserDetailsService userDetailsService() {
+        return new org.springframework.security.provisioning.InMemoryUserDetailsManager();
+    }
 
 	@Bean
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
