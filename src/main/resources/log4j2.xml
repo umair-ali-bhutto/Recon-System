@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- <Configuration status="WARN" monitorInterval="60"> -->
+<Configuration status="WARN">
+	<Properties>
+		<Property name="LOG_DIR">/mnt/8EFED7B1FED79037/UBUNTU-BACKUP/Desktop/ag-mw-logs
+		</Property>
+		<Property name="LOG_FILE">Recon-System</Property>
+		<Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level
+			%logger{1} - %msg%n%throwable</Property>
+	</Properties>
+
+	<Appenders>
+		<Console name="Console" target="SYSTEM_OUT">
+			<PatternLayout pattern="${LOG_PATTERN}" />
+		</Console>
+
+		<RollingFile name="FileLogger"
+			fileName="${LOG_DIR}/${LOG_FILE}.log"
+			filePattern="${LOG_DIR}/${LOG_FILE}-%d{yyyy-MM-dd}-%i.log.gz">
+			<PatternLayout pattern="${LOG_PATTERN}" />
+
+			<Policies>
+				<TimeBasedTriggeringPolicy interval="1"
+					modulate="true" />
+				<SizeBasedTriggeringPolicy size="50 MB" />
+			</Policies>
+
+			<DefaultRolloverStrategy max="30">
+				<Delete basePath="${LOG_DIR}" maxDepth="1">
+					<IfFileName glob="${LOG_FILE}-*.log.gz" />
+					<IfLastModified age="30d" />
+				</Delete>
+			</DefaultRolloverStrategy>
+		</RollingFile>
+	</Appenders>
+
+	<Loggers>
+
+		<Logger name="com.ag" level="debug" additivity="false">
+			<AppenderRef ref="FileLogger" />
+			<AppenderRef ref="Console" />
+		</Logger>
+
+		<Logger name="org.springframework" level="warn"
+			additivity="false">
+			<AppenderRef ref="Console" />
+		</Logger>
+
+		<Root level="error">
+			<AppenderRef ref="FileLogger" />
+			<AppenderRef ref="Console" />
+		</Root>
+	</Loggers>
+</Configuration>
