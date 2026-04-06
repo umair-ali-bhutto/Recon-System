@@ -17,10 +17,10 @@ public class TestController {
 		JSONObject job = new JSONObject();
 		try {
 			job.put("code", "0000");
-			job.put("message", "Success");
+			job.put("message", "Success.");
 		} catch (Exception e) {
-			job.put("code", "0000");
-			job.put("message", "Success");
+			job.put("code", "9999");
+			job.put("message", "Something Went Wrong.");
 			AgLogger.logError(getClass(), "Exception", e);
 		}
 		return job;

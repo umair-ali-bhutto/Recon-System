@@ -1,5 +1,6 @@
 package com.ag.recon.service;
 
+import com.ag.recon.enums.FileStatus;
 import com.ag.recon.mapper.DynamicMapper;
 import com.ag.recon.parsers.FileParserStrategy;
 import com.ag.recon.parsers.ParserFactory;
@@ -14,13 +15,19 @@ public class FileIngestionService {
 
 	private final ParserFactory parserFactory;
 	private final DynamicMapper dynamicMapper;
+	private final ReconFileMasterService fileMasterService;
 
-	public FileIngestionService(ParserFactory parserFactory, DynamicMapper dynamicMapper) {
+	public FileIngestionService(ParserFactory parserFactory, DynamicMapper dynamicMapper,
+			ReconFileMasterService fileMasterService) {
 		this.parserFactory = parserFactory;
 		this.dynamicMapper = dynamicMapper;
+		this.fileMasterService = fileMasterService;
 	}
 
-	public void ingestFile(String filePath, String corpId) throws Exception {
+	public void ingestFile(Long masterId, String filePath, String corpId) throws Exception {
+
+		fileMasterService.updateStatus(masterId, FileStatus.PROCESSING, "SYSTEM");
+
 		File file = new File(filePath);
 		String extension = getExtension(file.getName());
 		FileParserStrategy parser = parserFactory.getParser(extension);
@@ -29,7 +36,7 @@ public class FileIngestionService {
 			throw new RuntimeException("No parser found for " + extension);
 
 		List<Map<String, Object>> parsedData = parser.parse(file);
-		dynamicMapper.mapAndPersist(extension, parsedData, corpId);
+		dynamicMapper.mapAndPersist(masterId, extension, parsedData, corpId);
 	}
 
 	private String getExtension(String fileName) {

@@ -2,7 +2,8 @@
     {
         "corpId": "00004",
         "fileType": "csv",
-        "table": "test_1",
+        "tableName": "RECON_DETAIL",
+        "sequenceName": "RECON_DETAIL_SEQ",
         "columns": [
             {
                 "source": "id",
@@ -13,40 +14,6 @@
                 "source": "amnt",
                 "target": "amount",
                 "type": "DECIMAL"
-            }
-        ]
-    },
-    {
-        "corpId": "00004",
-        "fileType": "xlsx",
-        "table": "payments",
-        "columns": [
-            {
-                "source": "PaymentID",
-                "target": "payment_id",
-                "type": "STRING"
-            },
-            {
-                "source": "Amount",
-                "target": "amount",
-                "type": "DECIMAL"
-            },
-            {
-                "source": "PaymentDate",
-                "target": "payment_date",
-                "type": "DATE"
-            }
-        ]
-    },
-    {
-        "corpId": "00004",
-        "fileType": "txt",
-        "table": "logs",
-        "columns": [
-            {
-                "source": "line",
-                "target": "log_line",
-                "type": "STRING"
             }
         ]
     }
