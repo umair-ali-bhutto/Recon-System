@@ -29,15 +29,9 @@ public class FileUploadController {
 	private final FileIngestionService ingestionService;
 	private final ReconFileMasterService fileMasterService;
 
-	/**
-	 * true = keep original file in uploads + create copy in processed
-	 * 
-	 * false = move file from uploads to processed
-	 */
 	private static final boolean COPY_ONLY = true;
 
 	private static final Path UPLOAD_BASE = Paths.get("Uploader", "uploads").toAbsolutePath().normalize();
-
 	private static final Path PROCESSED_BASE = Paths.get("Uploader", "processed").toAbsolutePath().normalize();
 
 	public FileUploadController(FileIngestionService ingestionService, ReconFileMasterService fileMasterService) {
@@ -68,43 +62,37 @@ public class FileUploadController {
 			String safeCorpId = sanitizeCorpId(corpId);
 			String safeOriginalName = sanitizeFileName(file.getOriginalFilename());
 
-			// ==========================================
+			// ==============================
 			// 1) SAVE IN UPLOAD FOLDER
-			// ==========================================
-			Path uploadDirectory = UPLOAD_BASE.resolve(safeCorpId).normalize();
-			validatePath(uploadDirectory, UPLOAD_BASE, "Invalid upload directory path");
-
+			// ==============================
+			Path uploadDirectory = safeResolve(UPLOAD_BASE, safeCorpId);
 			Files.createDirectories(uploadDirectory);
 
 			long millis = System.currentTimeMillis();
-
-			// safest option = generated name, keep original only in DB metadata
 			String uploadFileName = "UPLOADS_" + millis + "_" + UUID.randomUUID() + ".csv";
+
 			Date date = new Date(millis);
 			AgLogger.logInfo(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(date));
 
-			Path uploadedFilePath = uploadDirectory.resolve(uploadFileName).normalize();
-			validatePath(uploadedFilePath, UPLOAD_BASE, "Invalid upload file path");
-
+			Path uploadedFilePath = safeResolve(uploadDirectory, uploadFileName);
 			Files.write(uploadedFilePath, file.getBytes());
 
 			File uploadedFile = uploadedFilePath.toFile();
 
-			// insert into db
 			ReconFileMaster fileRecord = fileMasterService.createFileRecord(safeCorpId, safeOriginalName,
 					uploadedFile.getAbsolutePath(), "SYSTEM");
 
-			AgLogger.logInfo("File saved in upload folder: " + uploadedFile.getAbsolutePath());
+			AgLogger.logInfo("File saved: " + uploadedFile.getAbsolutePath());
 
-			// ==========================================
+			// ==============================
 			// 2) PROCESS FILE
-			// ==========================================
+			// ==============================
 			ingestionService.ingestFile(fileRecord.getId(), uploadedFile.getAbsolutePath(), safeCorpId);
 
-			// ==========================================
-			// 3) COPY OR MOVE TO PROCESSED
-			// ==========================================
-			copyOrMoveToProcessed(uploadedFilePath, safeCorpId, safeOriginalName, COPY_ONLY);
+			// ==============================
+			// 3) COPY OR MOVE
+			// ==============================
+			copyOrMoveToProcessed(uploadedFilePath, safeCorpId, COPY_ONLY);
 
 			fileMasterService.updateStatus(fileRecord.getId(), FileStatus.PROCESSED, "SYSTEM");
 
@@ -114,7 +102,7 @@ public class FileUploadController {
 			AgLogger.logError(getClass(), "Validation failed", e);
 			model.addAttribute("message", e.getMessage());
 		} catch (Exception e) {
-			AgLogger.logError(getClass(), "File upload failed Exception", e);
+			AgLogger.logError(getClass(), "File upload failed", e);
 			model.addAttribute("message", "Failed to process file: " + e.getMessage());
 		}
 
@@ -122,53 +110,73 @@ public class FileUploadController {
 	}
 
 	/**
-	 * Copy OR Move file to:
-	 * processed/{corpId}/{yyyy-MM-dd}/PROCESSED_timestamp_uuid.csv
+	 * Copy OR Move file safely
 	 */
-	private void copyOrMoveToProcessed(Path sourcePath, String corpId, String originalFilename, boolean copyOnly)
-			throws Exception {
+	private void copyOrMoveToProcessed(Path sourcePath, String corpId, boolean copyOnly) throws Exception {
 
 		String currentDate = LocalDate.now().toString();
 
-		Path processedDirectory = PROCESSED_BASE.resolve(corpId).resolve(currentDate).normalize();
-
-		validatePath(processedDirectory, PROCESSED_BASE, "Invalid processed directory path");
-
+		Path processedDirectory = safeResolve(PROCESSED_BASE, corpId, currentDate);
 		Files.createDirectories(processedDirectory);
 
 		String finalFileName = "PROCESSED_" + System.currentTimeMillis() + "_" + UUID.randomUUID() + ".csv";
 
-		Path targetPath = processedDirectory.resolve(finalFileName).normalize();
-		validatePath(targetPath, PROCESSED_BASE, "Invalid processed target path");
+		Path targetPath = safeResolve(processedDirectory, finalFileName);
 
 		if (copyOnly) {
 			Files.copy(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
-			AgLogger.logInfo("File copied to processed folder: " + targetPath);
+			AgLogger.logInfo("File copied: " + targetPath);
 		} else {
 			Files.move(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
-			AgLogger.logInfo("File moved to processed folder: " + targetPath);
+			AgLogger.logInfo("File moved: " + targetPath);
 		}
 	}
 
-	private String sanitizeCorpId(String corpId) {
-		if (corpId == null || !corpId.matches("\\d+")) {
-			throw new IllegalArgumentException("Invalid Corporate ID. Only letters, numbers, _ and - are allowed.");
+	// ==============================
+	// 🔐 SECURITY METHODS
+	// ==============================
+
+	private Path safeResolve(Path base, String... parts) {
+
+		Path resolved = base;
+
+		for (String part : parts) {
+
+			// Reject dangerous input early
+			if (part.contains("..") || part.contains("/") || part.contains("\\")) {
+				throw new SecurityException("Invalid path component: " + part);
+			}
+
+			resolved = resolved.resolve(part);
 		}
+
+		Path normalizedBase = base.toAbsolutePath().normalize();
+		Path normalizedResolved = resolved.toAbsolutePath().normalize();
+
+		if (!normalizedResolved.startsWith(normalizedBase)) {
+			throw new SecurityException("Path traversal attempt detected");
+		}
+
+		return normalizedResolved;
+	}
+
+	private String sanitizeCorpId(String corpId) {
+
+		if (corpId == null || !corpId.matches("\\d{1,10}")) {
+			throw new IllegalArgumentException("Invalid Corporate ID.");
+		}
+
 		return corpId;
 	}
 
 	private String sanitizeFileName(String fileName) {
+
 		if (fileName == null || fileName.trim().isEmpty()) {
 			throw new IllegalArgumentException("Invalid file name.");
 		}
 
 		String cleanName = Paths.get(fileName).getFileName().toString();
-		return cleanName.replaceAll("[^A-Za-z0-9._-]", "_");
-	}
 
-	private void validatePath(Path targetPath, Path basePath, String message) {
-		if (!targetPath.startsWith(basePath)) {
-			throw new SecurityException(message);
-		}
+		return cleanName.replaceAll("[^A-Za-z0-9._-]", "_");
 	}
 }
