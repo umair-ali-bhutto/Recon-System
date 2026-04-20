@@ -7,13 +7,23 @@
         "columns": [
             {
                 "source": "id",
-                "target": "txn_id",
-                "type": "INTEGER"
+                "target": "txn_id"
             },
             {
                 "source": "amnt",
-                "target": "amount",
-                "type": "DECIMAL"
+                "target": "amount"
+            },
+            {
+                "source": "merchantId",
+                "target": "mid"
+            },
+            {
+                "source": "Terminal ID",
+                "target": "tid"
+            },
+            {
+                "source": "Ref Num",
+                "target": "rrn"
             }
         ]
     }

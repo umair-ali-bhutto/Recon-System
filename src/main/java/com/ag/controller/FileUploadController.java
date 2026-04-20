@@ -1,10 +1,14 @@
 package com.ag.controller;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.text.SimpleDateFormat;
 import java.time.LocalDate;
+import java.util.Date;
+import java.util.UUID;
 
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -26,10 +30,15 @@ public class FileUploadController {
 	private final ReconFileMasterService fileMasterService;
 
 	/**
-	 * true = keep original file in uploads + create copy in processed false = move
-	 * file from uploads to processed
+	 * true = keep original file in uploads + create copy in processed
+	 * 
+	 * false = move file from uploads to processed
 	 */
 	private static final boolean COPY_ONLY = true;
+
+	private static final Path UPLOAD_BASE = Paths.get("Uploader", "uploads").toAbsolutePath().normalize();
+
+	private static final Path PROCESSED_BASE = Paths.get("Uploader", "processed").toAbsolutePath().normalize();
 
 	public FileUploadController(FileIngestionService ingestionService, ReconFileMasterService fileMasterService) {
 		this.ingestionService = ingestionService;
@@ -55,30 +64,34 @@ public class FileUploadController {
 			return "upload";
 		}
 
-		File uploadedFile = null;
-
 		try {
+			String safeCorpId = sanitizeCorpId(corpId);
+			String safeOriginalName = sanitizeFileName(file.getOriginalFilename());
+
 			// ==========================================
 			// 1) SAVE IN UPLOAD FOLDER
 			// ==========================================
-			String uploadDir = "uploads/" + corpId + "/";
-			File uploadDirectory = new File(uploadDir);
+			Path uploadDirectory = UPLOAD_BASE.resolve(safeCorpId).normalize();
+			validatePath(uploadDirectory, UPLOAD_BASE, "Invalid upload directory path");
 
-			if (!uploadDirectory.exists()) {
-				uploadDirectory.mkdirs();
-			}
+			Files.createDirectories(uploadDirectory);
 
-			String originalFilename = file.getOriginalFilename();
-			String uploadFileName = "UPLOADS_" + System.currentTimeMillis() + "_" + originalFilename;
+			long millis = System.currentTimeMillis();
 
-			uploadedFile = new File(uploadDirectory, uploadFileName);
+			// safest option = generated name, keep original only in DB metadata
+			String uploadFileName = "UPLOADS_" + millis + "_" + UUID.randomUUID() + ".csv";
+			Date date = new Date(millis);
+			AgLogger.logInfo(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(date));
 
-			try (FileOutputStream fos = new FileOutputStream(uploadedFile)) {
-				fos.write(file.getBytes());
-			}
+			Path uploadedFilePath = uploadDirectory.resolve(uploadFileName).normalize();
+			validatePath(uploadedFilePath, UPLOAD_BASE, "Invalid upload file path");
+
+			Files.write(uploadedFilePath, file.getBytes());
+
+			File uploadedFile = uploadedFilePath.toFile();
 
 			// insert into db
-			ReconFileMaster fileRecord = fileMasterService.createFileRecord(corpId, originalFilename,
+			ReconFileMaster fileRecord = fileMasterService.createFileRecord(safeCorpId, safeOriginalName,
 					uploadedFile.getAbsolutePath(), "SYSTEM");
 
 			AgLogger.logInfo("File saved in upload folder: " + uploadedFile.getAbsolutePath());
@@ -86,17 +99,20 @@ public class FileUploadController {
 			// ==========================================
 			// 2) PROCESS FILE
 			// ==========================================
-			ingestionService.ingestFile(fileRecord.getId(), uploadedFile.getAbsolutePath(), corpId);
+			ingestionService.ingestFile(fileRecord.getId(), uploadedFile.getAbsolutePath(), safeCorpId);
 
 			// ==========================================
 			// 3) COPY OR MOVE TO PROCESSED
 			// ==========================================
-			copyOrMoveToProcessed(uploadedFile, corpId, originalFilename, COPY_ONLY);
+			copyOrMoveToProcessed(uploadedFilePath, safeCorpId, safeOriginalName, COPY_ONLY);
 
 			fileMasterService.updateStatus(fileRecord.getId(), FileStatus.PROCESSED, "SYSTEM");
 
 			model.addAttribute("message", "File uploaded, processed, and stored successfully!");
 
+		} catch (IllegalArgumentException | SecurityException e) {
+			AgLogger.logError(getClass(), "Validation failed", e);
+			model.addAttribute("message", e.getMessage());
 		} catch (Exception e) {
 			AgLogger.logError(getClass(), "File upload failed Exception", e);
 			model.addAttribute("message", "Failed to process file: " + e.getMessage());
@@ -107,39 +123,52 @@ public class FileUploadController {
 
 	/**
 	 * Copy OR Move file to:
-	 * processed/{corpId}/{yyyy-MM-dd}/{currentTimeMillis}_PROCESSED_file.csv
+	 * processed/{corpId}/{yyyy-MM-dd}/PROCESSED_timestamp_uuid.csv
 	 */
-	private void copyOrMoveToProcessed(File sourceFile, String corpId, String originalFilename, boolean copyOnly)
+	private void copyOrMoveToProcessed(Path sourcePath, String corpId, String originalFilename, boolean copyOnly)
 			throws Exception {
 
 		String currentDate = LocalDate.now().toString();
 
-		String processedDir = "processed/" + corpId + "/" + currentDate + "/";
-		File processedDirectory = new File(processedDir);
+		Path processedDirectory = PROCESSED_BASE.resolve(corpId).resolve(currentDate).normalize();
 
-		if (!processedDirectory.exists()) {
-			processedDirectory.mkdirs();
-		}
+		validatePath(processedDirectory, PROCESSED_BASE, "Invalid processed directory path");
 
-		String finalFileName = "PROCESSED_" + System.currentTimeMillis() + "_" + originalFilename;
+		Files.createDirectories(processedDirectory);
 
-		File targetFile = new File(processedDirectory, finalFileName);
+		String finalFileName = "PROCESSED_" + System.currentTimeMillis() + "_" + UUID.randomUUID() + ".csv";
+
+		Path targetPath = processedDirectory.resolve(finalFileName).normalize();
+		validatePath(targetPath, PROCESSED_BASE, "Invalid processed target path");
 
 		if (copyOnly) {
-			// ======================================
-			// COPY MODE
-			// ======================================
-			Files.copy(sourceFile.toPath(), targetFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-
-			AgLogger.logInfo("File copied to processed folder: " + targetFile.getAbsolutePath());
-
+			Files.copy(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+			AgLogger.logInfo("File copied to processed folder: " + targetPath);
 		} else {
-			// ======================================
-			// MOVE MODE
-			// ======================================
-			Files.move(sourceFile.toPath(), targetFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+			Files.move(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+			AgLogger.logInfo("File moved to processed folder: " + targetPath);
+		}
+	}
 
-			AgLogger.logInfo("File moved to processed folder: " + targetFile.getAbsolutePath());
+	private String sanitizeCorpId(String corpId) {
+		if (corpId == null || !corpId.matches("\\d+")) {
+			throw new IllegalArgumentException("Invalid Corporate ID. Only letters, numbers, _ and - are allowed.");
+		}
+		return corpId;
+	}
+
+	private String sanitizeFileName(String fileName) {
+		if (fileName == null || fileName.trim().isEmpty()) {
+			throw new IllegalArgumentException("Invalid file name.");
+		}
+
+		String cleanName = Paths.get(fileName).getFileName().toString();
+		return cleanName.replaceAll("[^A-Za-z0-9._-]", "_");
+	}
+
+	private void validatePath(Path targetPath, Path basePath, String message) {
+		if (!targetPath.startsWith(basePath)) {
+			throw new SecurityException(message);
 		}
 	}
 }

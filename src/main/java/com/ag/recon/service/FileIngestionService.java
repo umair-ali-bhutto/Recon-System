@@ -1,7 +1,8 @@
 package com.ag.recon.service;
 
 import com.ag.recon.enums.FileStatus;
-import com.ag.recon.mapper.DynamicMapper;
+import com.ag.recon.mapper.DynamicMapperOld;
+import com.ag.recon.mapper.DynamicMapperBulk;
 import com.ag.recon.parsers.FileParserStrategy;
 import com.ag.recon.parsers.ParserFactory;
 import org.springframework.stereotype.Service;
@@ -14,13 +15,13 @@ import java.util.Map;
 public class FileIngestionService {
 
 	private final ParserFactory parserFactory;
-	private final DynamicMapper dynamicMapper;
+	private final DynamicMapperBulk dynamicMapperBulk;
 	private final ReconFileMasterService fileMasterService;
 
-	public FileIngestionService(ParserFactory parserFactory, DynamicMapper dynamicMapper,
+	public FileIngestionService(ParserFactory parserFactory, DynamicMapperBulk dynamicMapperBulk,
 			ReconFileMasterService fileMasterService) {
 		this.parserFactory = parserFactory;
-		this.dynamicMapper = dynamicMapper;
+		this.dynamicMapperBulk = dynamicMapperBulk;
 		this.fileMasterService = fileMasterService;
 	}
 
@@ -36,7 +37,7 @@ public class FileIngestionService {
 			throw new RuntimeException("No parser found for " + extension);
 
 		List<Map<String, Object>> parsedData = parser.parse(file);
-		dynamicMapper.mapAndPersist(masterId, extension, parsedData, corpId);
+		dynamicMapperBulk.mapAndPersist(masterId, extension, parsedData, corpId);
 	}
 
 	private String getExtension(String fileName) {
